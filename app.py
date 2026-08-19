@@ -83,8 +83,6 @@ if "username" not in st.session_state:
     st.session_state.username = None
 if "current_project" not in st.session_state:
     st.session_state.current_project = None
-if "user_data_store" not in st.session_state:
-    st.session_state.user_data_store = {}
 if "omega_sq" not in st.session_state:
     st.session_state.omega_sq = 0.042
 
@@ -448,8 +446,10 @@ if st.session_state.current_project:
             with dl4:
                 if st.button("💾 Save Session to Account"):
                     if 'df_results' in locals():
-                        st.session_state.user_data_store[save_prefix] = df_results
-                        st.success(f"Saved session '{save_prefix}' to user account '{st.session_state.username}'.")
+                        # Save CSV directly to the physical project folder
+                        save_path = project_dir / f"{save_prefix}_results.csv"
+                        df_results.to_csv(save_path, index=False)
+                        st.success(f"Successfully saved **{save_prefix}_results.csv** to your project folder!")
 
     else:
         st.info("👆 Please upload a new file or select a saved dataset from the tabs above.")
