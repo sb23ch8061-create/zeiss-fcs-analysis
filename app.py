@@ -8,6 +8,7 @@ from pathlib import Path
 from read_zeiss import load_zeiss
 from fit_models import fit_standard, fit_triplet
 from export_results import results_to_dataframe
+from auth_db import verify_user, create_user
 
 # Wrapper inside app.py to preserve original fit_models.py untouched
 def fit_fcs_model(tau, G, model_type="Standard 3D", S=7.5):
@@ -68,10 +69,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Create local directory for user accounts (Legacy system, will be updated)
-STORAGE_DIR = Path("saved_user_data")
-STORAGE_DIR.mkdir(exist_ok=True)
-
 # Session State Initialization
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -85,25 +82,50 @@ if "omega_sq" not in st.session_state:
 # --- USER AUTHENTICATION MODULE ---
 def login_screen():
     st.title("🔬 Zeiss LSM980 FCS Real-Time Analysis Suite")
-    st.subheader("User Authentication & Data Workspace")
+    st.subheader("Database-Backed User Authentication & Data Workspace")
     
     col1, col2 = st.columns([1, 1])
     with col1:
-        st.markdown("### Sign In / Register Session")
+        tab_login, tab_register = st.tabs(["🔐 Sign In", "📝 Register Account"])
         
-        # Wrapped in form to prevent empty string bug
-        with st.form("login_form"):
-            username = st.text_input("Username or Lab ID")
-            password = st.text_input("Access Key / Password", type="password")
-            submit_btn = st.form_submit_button("Enter Analysis Suite", type="primary")
-            
-            if submit_btn:
-                if username.strip() != "":
-                    st.session_state.authenticated = True
-                    st.session_state.username = username
-                    st.rerun()
-                else:
-                    st.error("Please provide a valid Username or Lab ID.")
+        # TAB 1: SIGN IN
+        with tab_login:
+            with st.form("login_form"):
+                username = st.text_input("Username / Lab ID")
+                password = st.text_input("Password", type="password")
+                submit_btn = st.form_submit_button("Enter Analysis Suite", type="primary")
+                
+                if submit_btn:
+                    if username.strip() == "" or password.strip() == "":
+                        st.error("Please enter both username and password.")
+                    else:
+                        if verify_user(username.strip(), password):
+                            st.session_state.authenticated = True
+                            st.session_state.username = username.strip()
+                            st.success("Authentication successful!")
+                            st.rerun()
+                        else:
+                            st.error("Invalid username or password.")
+                            
+        # TAB 2: REGISTER
+        with tab_register:
+            with st.form("register_form"):
+                new_username = st.text_input("Choose Username / Lab ID")
+                new_password = st.text_input("Choose Password", type="password")
+                confirm_password = st.text_input("Confirm Password", type="password")
+                reg_btn = st.form_submit_button("Create Account")
+                
+                if reg_btn:
+                    if new_username.strip() == "" or new_password.strip() == "":
+                        st.error("All fields are required.")
+                    elif new_password != confirm_password:
+                        st.error("Passwords do not match.")
+                    else:
+                        success, msg = create_user(new_username.strip(), new_password)
+                        if success:
+                            st.success(msg)
+                        else:
+                            st.error(msg)
                 
     with col2:
         st.info("""
@@ -111,7 +133,7 @@ def login_screen():
         * Multi-Model FCS Fitting (Standard 3D, Triplet 3D).
         * Automated Model Selection (AIC & BIC criteria).
         * Stokes-Einstein Hydrodynamic Radius ($R_h$) & Molar Concentration ($C$) Calculators.
-        * File upload & personal analysis session storage.
+        * Secure SQLite-backed user authentication and isolated data storage.
         """)
 
 # --- AUTHENTICATION GATE ---
