@@ -8,11 +8,11 @@ from pathlib import Path
 DB_FILE = Path("fcs_app.db")
 
 def init_db():
-    """Initializes the SQLite database and creates the users table if it doesn't exist."""
+    """Initializes the SQLite database and creates necessary tables."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
-    # Create users table
+    # 1. Users table (Existing)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,33 +23,51 @@ def init_db():
         )
     ''')
     
+    # 2. Projects table (NEW)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    ''')
+    
+    # 3. Datasets table (NEW)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS datasets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            filename TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            upload_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (project_id) REFERENCES projects(id)
+        )
+    ''')
+    
     conn.commit()
     conn.close()
 
+# --- AUTHENTICATION FUNCTIONS ---
+
 def _hash_password(password: str, salt: bytes) -> str:
-    """Hashes a password with a given salt securely using PBKDF2."""
-    return hashlib.pbkdf2_hmac(
-        'sha256', 
-        password.encode('utf-8'), 
-        salt, 
-        100000
-    ).hex()
+    """Hashes a password securely."""
+    return hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000).hex()
 
 def create_user(username, password):
-    """Creates a new user. Returns (True, "Success message") or (False, "Error message")."""
+    """Creates a new user."""
     if not username or not password:
         return False, "Username and password cannot be empty."
         
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
-    # Check if user already exists
     cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
     if cursor.fetchone() is not None:
         conn.close()
         return False, "Username already exists. Please choose another."
         
-    # Generate secure random salt and hash the password
     salt = os.urandom(32)
     password_hash = _hash_password(password, salt)
     
@@ -70,7 +88,7 @@ def create_user(username, password):
     return success, msg
 
 def verify_user(username, password):
-    """Verifies a user's login credentials. Returns True if valid, False otherwise."""
+    """Verifies user login."""
     if not username or not password:
         return False
         
@@ -82,15 +100,65 @@ def verify_user(username, password):
     conn.close()
     
     if record is None:
-        return False  # User not found
+        return False
         
     stored_hash, stored_salt_hex = record
-    stored_salt = bytes.fromhex(stored_salt_hex)
-    
-    # Hash the provided password with the stored salt to see if they match
-    attempt_hash = _hash_password(password, stored_salt)
-    
+    attempt_hash = _hash_password(password, bytes.fromhex(stored_salt_hex))
     return attempt_hash == stored_hash
+
+def get_user_id(username):
+    """Retrieves the internal database ID for a given username."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+    record = cursor.fetchone()
+    conn.close()
+    return record[0] if record else None
+
+# --- PROJECT & FILE MANAGEMENT FUNCTIONS (NEW) ---
+
+def create_project(username, project_name):
+    """Creates a new project for the specified user."""
+    user_id = get_user_id(username)
+    if not user_id:
+        return False, "User not found."
+        
+    if not project_name.strip():
+        return False, "Project name cannot be empty."
+        
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
     
-# Automatically initialize the database when this module is imported
+    # Prevent duplicate project names for the same user
+    cursor.execute("SELECT id FROM projects WHERE user_id = ? AND name = ?", (user_id, project_name))
+    if cursor.fetchone() is not None:
+        conn.close()
+        return False, "A project with this name already exists."
+        
+    try:
+        cursor.execute("INSERT INTO projects (user_id, name) VALUES (?, ?)", (user_id, project_name))
+        conn.commit()
+        success, msg = True, "Project created successfully."
+    except Exception as e:
+        success, msg = False, f"Error creating project: {e}"
+    finally:
+        conn.close()
+    return success, msg
+
+def get_user_projects(username):
+    """Returns a list of project names and IDs for a user."""
+    user_id = get_user_id(username)
+    if not user_id:
+        return []
+        
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, created_at FROM projects WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+    projects = cursor.fetchall()
+    conn.close()
+    
+    # Format as list of dictionaries for easy use in Streamlit
+    return [{"id": p[0], "name": p[1], "created_at": p[2]} for p in projects]
+
+# Automatically initialize the database when imported
 init_db()
