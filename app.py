@@ -8,7 +8,14 @@ from pathlib import Path
 from read_zeiss import load_zeiss
 from fit_models import fit_standard, fit_triplet
 from export_results import results_to_dataframe
-from auth_db import verify_user, create_user, create_project, get_user_projects
+from auth_db import (
+    verify_user, 
+    create_user, 
+    create_project, 
+    get_user_projects, 
+    save_dataset_record, 
+    get_project_datasets
+)
 
 # Wrapper inside app.py to preserve original fit_models.py untouched
 def fit_fcs_model(tau, G, model_type="Standard 3D", S=7.5):
@@ -155,7 +162,7 @@ if st.sidebar.button("Log Out"):
 
 st.title("Zeiss LSM980 FCS Real-Time Dashboard")
 
-# --- PROJECT WORKSPACE UI (NEW) ---
+# --- PROJECT WORKSPACE UI ---
 st.subheader("📁 Project Workspace")
 project_col1, project_col2 = st.columns([1, 2])
 
@@ -180,7 +187,6 @@ with project_col1:
 
 with project_col2:
     if project_names:
-        # If a project is already selected, set it as default in the dropdown
         default_idx = project_names.index(st.session_state.current_project) if st.session_state.current_project in project_names else 0
         
         selected_project = st.selectbox(
@@ -205,22 +211,57 @@ st.divider()
 if st.session_state.current_project:
     st.markdown(f"### Current Workspace: **{st.session_state.current_project}**")
     
-    # 1. File Upload & Workspace
-    uploaded_file = st.file_uploader(
-        "📂 Upload Zeiss FCS Raw Data File (.txt, .dat, .csv)", 
-        type=["txt", "dat", "csv"]
-    )
+    # Ensure project directory exists
+    project_dir = Path("user_data") / st.session_state.username / st.session_state.current_project
+    project_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Load saved datasets for this project
+    saved_datasets = get_project_datasets(st.session_state.username, st.session_state.current_project)
+    
+    source_tab1, source_tab2 = st.tabs(["📤 Upload New File", "📂 Saved Project Datasets"])
+    
+    active_file_stream = None
+    active_filename = None
+    
+    with source_tab1:
+        uploaded_file = st.file_uploader(
+            "📂 Upload Zeiss FCS Raw Data File (.txt, .dat, .csv)", 
+            type=["txt", "dat", "csv"],
+            key="uploader"
+        )
+        if uploaded_file is not None:
+            # Save uploaded file to project directory
+            saved_path = project_dir / uploaded_file.name
+            with open(saved_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            
+            # Save record to DB
+            save_dataset_record(st.session_state.username, st.session_state.current_project, uploaded_file.name, str(saved_path))
+            
+            active_file_stream = saved_path
+            active_filename = uploaded_file.name
+            st.success(f"File **{uploaded_file.name}** saved to project folder.")
+
+    with source_tab2:
+        if saved_datasets:
+            dataset_options = {d["filename"]: Path(d["file_path"]) for d in saved_datasets}
+            selected_saved = st.selectbox("Select a previously uploaded dataset:", list(dataset_options.keys()))
+            if selected_saved:
+                active_file_stream = dataset_options[selected_saved]
+                active_filename = selected_saved
+        else:
+            st.info("No saved datasets found in this project yet.")
 
     @st.cache_data
-    def get_data(file_obj):
+    def get_data(file_path_or_obj):
         try:
-            return load_zeiss(file_obj)
+            return load_zeiss(file_path_or_obj)
         except Exception as e:
-            st.error(f"Error reading file stream: {e}")
+            st.error(f"Error reading file content: {e}")
             return None
 
-    if uploaded_file is not None:
-        datasets = get_data(uploaded_file)
+    if active_file_stream is not None:
+        datasets = get_data(active_file_stream)
 
         if datasets:
             rep_keys = [k for k in datasets.keys() if k != "Average"]
@@ -270,7 +311,7 @@ if st.session_state.current_project:
             # --- 2. FIT PROCESSING ENGINE ---
             results = {}
 
-            with st.spinner(f"Fitting data using model [{model_choice}]..."):
+            with st.spinner(f"Fitting data from '{active_filename}' using model [{model_choice}]..."):
                 for name in rep_keys:
                     tau = np.array(datasets[name]["tau"])
                     G = np.array(datasets[name]["G"])
@@ -388,8 +429,8 @@ if st.session_state.current_project:
             st.divider()
 
             # --- 5. DATA PERSISTENCE & EXPORT SECTION ---
-            st.subheader("💾 Save, Store & Export Session Analysis")
-            save_prefix = st.text_input("Filename / Session Name Prefix:", value="FCS_Analysis")
+            st.subheader("💾 Save & Export Session Analysis")
+            save_prefix = st.text_input("Filename / Session Name Prefix:", value=f"{active_filename}_fitted" if active_filename else "FCS_Analysis")
 
             dl1, dl2, dl3, dl4 = st.columns(4)
             with dl1:
@@ -407,7 +448,7 @@ if st.session_state.current_project:
                         st.success(f"Saved session '{save_prefix}' to user account '{st.session_state.username}'.")
 
     else:
-        st.info("👆 Please upload a raw FCS correlation text file to unlock real-time fitting.")
+        st.info("👆 Please upload a new file or select a saved dataset from the tabs above.")
 else:
     st.warning("⚠️ Please create or select a project above to begin uploading and analyzing data.")
 
