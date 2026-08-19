@@ -1,10 +1,13 @@
 import streamlit as st
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import io
 import scipy.constants as const
 from pathlib import Path
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import plotly.express as px
+
 from read_zeiss import load_zeiss
 from fit_models import fit_standard, fit_triplet
 from export_results import results_to_dataframe
@@ -147,7 +150,6 @@ if not st.session_state.authenticated:
     st.markdown('<div class="footer">© 2026 Zeiss LSM980 FCS Analysis Suite | Developed by SHIBASISH | Confidential & Proprietary</div>', unsafe_allow_html=True)
     st.stop()
 
-
 # =====================================================================
 # --- MAIN APPLICATION WORKSPACE ---
 # =====================================================================
@@ -216,7 +218,7 @@ if st.session_state.current_project:
     # Load saved datasets for this project
     saved_datasets = get_project_datasets(st.session_state.username, st.session_state.current_project)
     
-    source_tab1, source_tab2 = st.tabs(["📤 Upload New File", "📂 Saved Project Datasets"])
+    source_tab1, source_tab2, source_tab3 = st.tabs(["📤 Upload New File", "📂 Saved Project Datasets", "📊 Saved Results & Reports"])
     
     active_file_stream = None
     active_filename = None
@@ -228,14 +230,10 @@ if st.session_state.current_project:
             key="uploader"
         )
         if uploaded_file is not None:
-            # Save uploaded file to project directory
             saved_path = project_dir / uploaded_file.name
             with open(saved_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
-            
-            # Save record to DB
             save_dataset_record(st.session_state.username, st.session_state.current_project, uploaded_file.name, str(saved_path))
-            
             active_file_stream = saved_path
             active_filename = uploaded_file.name
             st.success(f"File **{uploaded_file.name}** saved to project folder.")
@@ -249,12 +247,24 @@ if st.session_state.current_project:
                 active_filename = selected_saved
         else:
             st.info("No saved datasets found in this project yet.")
+            
+    with source_tab3:
+        csv_files = list(project_dir.glob("*_results.csv"))
+        if csv_files:
+            st.markdown("#### 🗄️ Available Analysis Reports")
+            for f in csv_files:
+                c1, c2 = st.columns([3, 1])
+                with c1:
+                    st.write(f"📄 **{f.name}**")
+                with c2:
+                    with open(f, "rb") as file:
+                        st.download_button("Download CSV", data=file, file_name=f.name, mime="text/csv", key=f.name)
+        else:
+            st.info("No saved results found. Analyze a dataset and save the session to see reports here.")
 
     @st.cache_data
     def get_data(file_path):
         try:
-            # We open the saved file and wrap it in BytesIO to perfectly mimic
-            # Streamlit's original virtual file behavior for the Zeiss reader.
             with open(file_path, "rb") as f:
                 file_bytes = f.read()
             return load_zeiss(io.BytesIO(file_bytes))
@@ -270,57 +280,42 @@ if st.session_state.current_project:
 
             # --- SIDEBAR CONTROLS ---
             st.sidebar.header("⚙️ Model & Fit Parameters")
-            
             s_value = st.sidebar.slider("Structure Parameter (S)", min_value=1.0, max_value=15.0, value=7.5, step=0.1)
-            
             model_options = ["Standard 3D", "Triplet 3D"]
             model_choice = st.sidebar.selectbox("Select FCS Model", model_options)
-            
-            selected_reps = st.sidebar.multiselect(
-                "Select Repetitions to Compare", 
-                options=rep_keys, 
-                default=rep_keys[:2] if len(rep_keys) >= 2 else rep_keys
-            )
+            selected_reps = st.sidebar.multiselect("Select Repetitions to Compare", options=rep_keys, default=rep_keys[:2] if len(rep_keys) >= 2 else rep_keys)
 
             st.sidebar.divider()
             st.sidebar.subheader("🛡️ Data Quality Controls")
             min_r2 = st.sidebar.slider("Minimum R² Threshold Filter", 0.80, 0.999, 0.90, 0.005)
 
-            # --- PHYSICAL PARAMETERS & CALCULATORS ---
             st.sidebar.divider()
             st.sidebar.subheader("📐 Physical Calculators")
-            
             with st.sidebar.expander("Confocal Parameter Calculation (ω²)"):
                 d_val = st.number_input("Diffusivity (D)", value=400.0, format="%.6f")
                 d_unit = st.selectbox("Unit for D", ["µm²/s", "cm²/s"])
                 tau_val = st.number_input("Diffusion Time (τD)", value=25.0, format="%.6f")
                 tau_unit = st.selectbox("Unit for τD", ["µs", "ms", "s"])
-                
                 if st.button("Calculate ω²"):
                     d_um2 = d_val if d_unit == "µm²/s" else d_val * 1e8
                     t_s = tau_val * 1e-6 if tau_unit == "µs" else (tau_val * 1e-3 if tau_unit == "ms" else tau_val)
                     st.session_state.omega_sq = 4 * d_um2 * t_s
-                    
                 st.success(f"Current ω²: {st.session_state.omega_sq:.6e} µm²")
 
             with st.sidebar.expander("Hydrodynamic Radius (Rh) & Conc."):
                 temp_c = st.number_input("Temperature (°C)", value=25.0)
                 viscosity_mPas = st.number_input("Solvent Viscosity η (mPa·s)", value=0.890)
-                
                 temp_k = temp_c + 273.15
                 viscosity_pas = viscosity_mPas * 1e-3
 
             # --- 2. FIT PROCESSING ENGINE ---
             results = {}
-
             with st.spinner(f"Fitting data from '{active_filename}' using model [{model_choice}]..."):
                 for name in rep_keys:
                     tau = np.array(datasets[name]["tau"])
                     G = np.array(datasets[name]["G"])
-                    
                     mask = tau >= 1e-6
                     res = fit_fcs_model(tau[mask], G[mask], model_type=model_choice, S=s_value)
-                    
                     if res["R2"] >= min_r2:
                         results[name] = res
 
@@ -329,65 +324,56 @@ if st.session_state.current_project:
                 avg_mask = avg_tau >= 1e-6
                 avg_res = fit_fcs_model(avg_tau[avg_mask], avg_G[avg_mask], model_type=model_choice, S=s_value)
 
-            # --- 3. GRAPHICAL PLOTS SIDE-BY-SIDE ---
+            # --- 3. INTERACTIVE PLOTLY GRAPHS ---
+            st.markdown("*(Tip: Use your mouse wheel to zoom in on the graphs, and double-click to reset view)*")
             col1, col2 = st.columns(2)
             
             with col1:
                 st.subheader("Average Curve Fit & Residuals")
-                fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 5), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+                fig1 = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25], vertical_spacing=0.05)
                 
-                ax1.semilogx(avg_tau, avg_G, "o", ms=4, label="Experiment (Avg)", color="gray", alpha=0.3)
-                ax1.semilogx(avg_tau[avg_mask], avg_res["fit"], "-", lw=2, label=f"Fit ({model_choice})", color="red")
-                ax1.set_ylabel("G(tau)")
-                ax1.legend(fontsize="small")
-                ax1.grid(True, which="both", ls="--", alpha=0.3)
+                fig1.add_trace(go.Scatter(x=avg_tau, y=avg_G, mode='markers', name='Experiment (Avg)', marker=dict(color='gray', opacity=0.4, size=5)), row=1, col=1)
+                fig1.add_trace(go.Scatter(x=avg_tau[avg_mask], y=avg_res["fit"], mode='lines', name=f'Fit ({model_choice})', line=dict(color='red', width=2.5)), row=1, col=1)
                 
                 residuals = avg_G[avg_mask] - avg_res["fit"]
-                ax2.semilogx(avg_tau[avg_mask], residuals, "-", color="blue", lw=1.2)
-                ax2.axhline(0, color="black", linestyle="--", alpha=0.7)
-                ax2.set_xlabel("Lag time (s)")
-                ax2.set_ylabel("Residuals")
-                ax2.grid(True, which="both", ls="--", alpha=0.3)
+                fig1.add_trace(go.Scatter(x=avg_tau[avg_mask], y=residuals, mode='lines', name='Residuals', line=dict(color='blue', width=1.5)), row=2, col=1)
+                fig1.add_hline(y=0, line_dash="dash", line_color="black", row=2, col=1)
                 
-                plt.tight_layout()
-                st.pyplot(fig1)
+                fig1.update_xaxes(type="log", row=1, col=1)
+                fig1.update_xaxes(type="log", title_text="Lag time (s)", row=2, col=1)
+                fig1.update_yaxes(title_text="G(tau)", row=1, col=1)
+                fig1.update_yaxes(title_text="Residuals", row=2, col=1)
+                fig1.update_layout(height=450, margin=dict(l=0, r=0, t=30, b=0), showlegend=True, hovermode="x unified")
                 
-                buf1 = io.BytesIO()
-                fig1.savefig(buf1, format="png", dpi=300, bbox_inches='tight')
-                buf1.seek(0)
+                # config={'scrollZoom': True} enables the real-time scrolling you requested!
+                st.plotly_chart(fig1, use_container_width=True, config={'scrollZoom': True, 'displaylogo': False})
                 
             with col2:
                 st.subheader("Selected Repetition Fit & Residuals")
-                buf2 = None
                 if selected_reps:
-                    fig2, (rax1, rax2) = plt.subplots(2, 1, figsize=(6, 5), sharex=True, gridspec_kw={'height_ratios': [3, 1]})
+                    fig2 = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25], vertical_spacing=0.05)
+                    colors = px.colors.qualitative.Plotly
                     
-                    for rep_name in selected_reps:
+                    for i, rep_name in enumerate(selected_reps):
                         if rep_name in results:
                             rep_tau = np.array(datasets[rep_name]["tau"])
                             rep_G = np.array(datasets[rep_name]["G"])
                             rep_mask = rep_tau >= 1e-6
                             rep_res = results[rep_name]
+                            color = colors[i % len(colors)]
                             
-                            line_match = rax1.semilogx(rep_tau, rep_G, "o", ms=3, alpha=0.25)
-                            active_color = line_match[0].get_color()
-                            
-                            rax1.semilogx(rep_tau[rep_mask], rep_res["fit"], "-", lw=1.5, color=active_color, label=f"{rep_name}")
-                            rax2.semilogx(rep_tau[rep_mask], rep_G[rep_mask] - rep_res["fit"], "-", lw=1.2, color=active_color)
+                            fig2.add_trace(go.Scatter(x=rep_tau, y=rep_G, mode='markers', name=f'{rep_name} Data', marker=dict(color=color, opacity=0.3, size=4), showlegend=False), row=1, col=1)
+                            fig2.add_trace(go.Scatter(x=rep_tau[rep_mask], y=rep_res["fit"], mode='lines', name=rep_name, line=dict(color=color, width=2)), row=1, col=1)
+                            fig2.add_trace(go.Scatter(x=rep_tau[rep_mask], y=rep_G[rep_mask] - rep_res["fit"], mode='lines', name=f'{rep_name} Res', line=dict(color=color, width=1.5), showlegend=False), row=2, col=1)
                     
-                    rax1.set_ylabel("G(tau)")
-                    rax1.legend(fontsize='small', loc='upper right')
-                    rax1.grid(True, which="both", ls="--", alpha=0.3)
-                    rax2.axhline(0, color="black", linestyle="--", alpha=0.7)
-                    rax2.set_xlabel("Lag time (s)")
-                    rax2.set_ylabel("Residuals")
-                    rax2.grid(True, which="both", ls="--", alpha=0.3)
+                    fig2.add_hline(y=0, line_dash="dash", line_color="black", row=2, col=1)
+                    fig2.update_xaxes(type="log", row=1, col=1)
+                    fig2.update_xaxes(type="log", title_text="Lag time (s)", row=2, col=1)
+                    fig2.update_yaxes(title_text="G(tau)", row=1, col=1)
+                    fig2.update_yaxes(title_text="Residuals", row=2, col=1)
+                    fig2.update_layout(height=450, margin=dict(l=0, r=0, t=30, b=0), showlegend=True, hovermode="x unified")
                     
-                    plt.tight_layout()
-                    st.pyplot(fig2)
-                    buf2 = io.BytesIO()
-                    fig2.savefig(buf2, format="png", dpi=300, bbox_inches='tight')
-                    buf2.seek(0)
+                    st.plotly_chart(fig2, use_container_width=True, config={'scrollZoom': True, 'displaylogo': False})
 
             st.divider()
 
@@ -432,24 +418,20 @@ if st.session_state.current_project:
 
             # --- 5. DATA PERSISTENCE & EXPORT SECTION ---
             st.subheader("💾 Save & Export Session Analysis")
+            st.info("💡 **Tip:** To download an image of your zoomed-in graphs, hover over the top right corner of the graph and click the **Camera Icon**.")
+            
             save_prefix = st.text_input("Filename / Session Name Prefix:", value=f"{active_filename}_fitted" if active_filename else "FCS_Analysis")
 
-            dl1, dl2, dl3, dl4 = st.columns(4)
+            dl1, dl2 = st.columns([1, 1])
             with dl1:
                 if 'df_results' in locals():
                     st.download_button("📊 Download Full CSV Data", data=df_results.to_csv(index=False).encode('utf-8'), file_name=f"{save_prefix}_stats.csv", mime='text/csv')
             with dl2:
-                st.download_button("📈 Download Average Graph", data=buf1, file_name=f"{save_prefix}_AvgFit.png", mime='image/png')
-            with dl3:
-                if buf2:
-                    st.download_button("📉 Download Repetition Graph", data=buf2, file_name=f"{save_prefix}_RepsFit.png", mime='image/png')
-            with dl4:
                 if st.button("💾 Save Session to Account"):
                     if 'df_results' in locals():
-                        # Save CSV directly to the physical project folder
                         save_path = project_dir / f"{save_prefix}_results.csv"
                         df_results.to_csv(save_path, index=False)
-                        st.success(f"Successfully saved **{save_prefix}_results.csv** to your project folder!")
+                        st.success(f"Successfully saved **{save_prefix}_results.csv** to your project folder! You can view it in the **Saved Results** tab above.")
 
     else:
         st.info("👆 Please upload a new file or select a saved dataset from the tabs above.")
