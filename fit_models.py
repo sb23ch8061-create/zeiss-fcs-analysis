@@ -490,3 +490,39 @@ def fit_fcs_model(tau, G, model_type="Standard 3D", S=7.5):
         res["N"] = 1.0 / res["G0"] if res["G0"] > 0 else 0.0
 
     return res
+
+# --- 3. Anomalous 3D Diffusion Model ---
+# G(tau) = G0 * [1 + (tau/tauD)^alpha]^(-1) * [1 + (1/S^2)*(tau/tauD)^alpha]^(-0.5)
+def anomalous_3d(tau, G0, tauD, alpha, S=7.5):
+    term1 = (1.0 + (tau / tauD)**alpha)**(-1.0)
+    term2 = (1.0 + (1.0 / (S**2)) * (tau / tauD)**alpha)**(-0.5)
+    return G0 * term1 * term2
+
+def fit_anomalous(tau, G, S=7.5):
+    from scipy.optimize import curve_fit
+    try:
+        p0 = [G[0], 1e-4, 0.8]
+        bounds = ([0, 1e-8, 0.1], [np.inf, 10.0, 1.5])
+        popt, _ = curve_fit(lambda t, G0, tD, a: anomalous_3d(t, G0, tD, a, S), tau, G, p0=p0, bounds=bounds, maxfev=5000)
+        fit_curve = anomalous_3d(tau, *popt, S=S)
+        return {"G0": popt[0], "tauD": popt[1], "alpha": popt[2], "fit": fit_curve}
+    except Exception:
+        return {"G0": 0.0, "tauD": 1e-4, "alpha": 1.0, "fit": np.zeros_like(tau)}
+
+# --- 4. 2-Component 3D Diffusion Model ---
+# G(tau) = G0 * [ F1 * Diff1 + (1 - F1) * Diff2 ]
+def two_component_3d(tau, G0, tauD1, tauD2, F1, S=7.5):
+    comp1 = F1 * (1.0 + tau / tauD1)**(-1.0) * (1.0 + tau / (S**2 * tauD1))**(-0.5)
+    comp2 = (1.0 - F1) * (1.0 + tau / tauD2)**(-1.0) * (1.0 + tau / (S**2 * tauD2))**(-0.5)
+    return G0 * (comp1 + comp2)
+
+def fit_two_component(tau, G, S=7.5):
+    from scipy.optimize import curve_fit
+    try:
+        p0 = [G[0], 1e-5, 1e-3, 0.5]
+        bounds = ([0, 1e-8, 1e-8, 0.0], [np.inf, 10.0, 10.0, 1.0])
+        popt, _ = curve_fit(lambda t, G0, tD1, tD2, f1: two_component_3d(t, G0, tD1, tD2, f1, S), tau, G, p0=p0, bounds=bounds, maxfev=5000)
+        fit_curve = two_component_3d(tau, *popt, S=S)
+        return {"G0": popt[0], "tauD": popt[1], "tauD1": popt[1], "tauD2": popt[2], "F1": popt[3], "fit": fit_curve}
+    except Exception:
+        return {"G0": 0.0, "tauD": 1e-4, "tauD1": 1e-4, "tauD2": 1e-3, "F1": 0.5, "fit": np.zeros_like(tau)}
