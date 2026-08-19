@@ -12,7 +12,7 @@ def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
-    # 1. Users table (Existing)
+    # 1. Users table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,7 +23,7 @@ def init_db():
         )
     ''')
     
-    # 2. Projects table (NEW)
+    # 2. Projects table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS projects (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,7 +34,7 @@ def init_db():
         )
     ''')
     
-    # 3. Datasets table (NEW)
+    # 3. Datasets table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS datasets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,7 +115,7 @@ def get_user_id(username):
     conn.close()
     return record[0] if record else None
 
-# --- PROJECT & FILE MANAGEMENT FUNCTIONS (NEW) ---
+# --- PROJECT MANAGEMENT FUNCTIONS ---
 
 def create_project(username, project_name):
     """Creates a new project for the specified user."""
@@ -129,7 +129,6 @@ def create_project(username, project_name):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
-    # Prevent duplicate project names for the same user
     cursor.execute("SELECT id FROM projects WHERE user_id = ? AND name = ?", (user_id, project_name))
     if cursor.fetchone() is not None:
         conn.close()
@@ -157,8 +156,63 @@ def get_user_projects(username):
     projects = cursor.fetchall()
     conn.close()
     
-    # Format as list of dictionaries for easy use in Streamlit
     return [{"id": p[0], "name": p[1], "created_at": p[2]} for p in projects]
+
+# --- DATASET MANAGEMENT FUNCTIONS (NEW) ---
+
+def get_project_id(username, project_name):
+    """Retrieves the internal database ID for a specific project."""
+    user_id = get_user_id(username)
+    if not user_id: 
+        return None
+        
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM projects WHERE user_id = ? AND name = ?", (user_id, project_name))
+    record = cursor.fetchone()
+    conn.close()
+    
+    return record[0] if record else None
+
+def save_dataset_record(username, project_name, filename, file_path):
+    """Saves a record of an uploaded dataset to the database."""
+    project_id = get_project_id(username, project_name)
+    if not project_id: 
+        return False, "Project not found."
+        
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    try:
+        # Check if file already exists in db for this project
+        cursor.execute("SELECT id FROM datasets WHERE project_id = ? AND filename = ?", (project_id, filename))
+        if cursor.fetchone() is None:
+            cursor.execute(
+                "INSERT INTO datasets (project_id, filename, file_path) VALUES (?, ?, ?)",
+                (project_id, filename, str(file_path))
+            )
+            conn.commit()
+        success, msg = True, "Dataset recorded successfully."
+    except Exception as e:
+        success, msg = False, f"Database error: {e}"
+    finally:
+        conn.close()
+        
+    return success, msg
+
+def get_project_datasets(username, project_name):
+    """Retrieves all datasets associated with a specific project."""
+    project_id = get_project_id(username, project_name)
+    if not project_id: 
+        return []
+        
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, filename, file_path, upload_timestamp FROM datasets WHERE project_id = ? ORDER BY upload_timestamp DESC", (project_id,))
+    records = cursor.fetchall()
+    conn.close()
+    
+    return [{"id": r[0], "filename": r[1], "file_path": r[2], "upload_timestamp": r[3]} for r in records]
 
 # Automatically initialize the database when imported
 init_db()
