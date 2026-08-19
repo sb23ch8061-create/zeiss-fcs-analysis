@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import io
 import scipy.constants as const
+from pathlib import Path
 from read_zeiss import load_zeiss
 from fit_models import fit_standard, fit_triplet
 from export_results import results_to_dataframe
@@ -67,9 +68,15 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# Create local directory for user accounts (Legacy system, will be updated)
+STORAGE_DIR = Path("saved_user_data")
+STORAGE_DIR.mkdir(exist_ok=True)
+
 # Session State Initialization
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
+if "username" not in st.session_state:
+    st.session_state.username = None
 if "user_data_store" not in st.session_state:
     st.session_state.user_data_store = {}
 if "omega_sq" not in st.session_state:
@@ -83,16 +90,20 @@ def login_screen():
     col1, col2 = st.columns([1, 1])
     with col1:
         st.markdown("### Sign In / Register Session")
-        username = st.text_input("Username or Lab ID")
-        password = st.text_input("Access Key / Password", type="password")
         
-        if st.button("Enter Analysis Suite", type="primary"):
-            if username.strip() != "":
-                st.session_state.authenticated = True
-                st.session_state.username = username
-                st.rerun()
-            else:
-                st.error("Please provide a valid Username or Lab ID.")
+        # Wrapped in form to prevent empty string bug
+        with st.form("login_form"):
+            username = st.text_input("Username or Lab ID")
+            password = st.text_input("Access Key / Password", type="password")
+            submit_btn = st.form_submit_button("Enter Analysis Suite", type="primary")
+            
+            if submit_btn:
+                if username.strip() != "":
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.rerun()
+                else:
+                    st.error("Please provide a valid Username or Lab ID.")
                 
     with col2:
         st.info("""
@@ -103,15 +114,20 @@ def login_screen():
         * File upload & personal analysis session storage.
         """)
 
+# --- AUTHENTICATION GATE ---
 if not st.session_state.authenticated:
     login_screen()
-    st.markdown('<div class="footer">© 2026 Zeiss LSM980 FCS Analysis Suite | Developed by Ram et. al. | Confidential & Proprietary</div>', unsafe_allow_html=True)
+    st.markdown('<div class="footer">© 2026 Zeiss LSM980 FCS Analysis Suite | Developed by SHIBASISH | Confidential & Proprietary</div>', unsafe_allow_html=True)
     st.stop()
 
+
+# =====================================================================
 # --- MAIN APPLICATION WORKSPACE ---
+# =====================================================================
 st.sidebar.markdown(f"👤 **User:** `{st.session_state.username}`")
 if st.sidebar.button("Log Out"):
     st.session_state.authenticated = False
+    st.session_state.username = None
     st.rerun()
 
 st.title("Zeiss LSM980 FCS Real-Time Dashboard")
@@ -320,4 +336,4 @@ if uploaded_file is not None:
 else:
     st.info("👆 Please upload a raw FCS correlation text file to unlock real-time fitting.")
 
-st.markdown('<div class="footer">© 2026 Zeiss LSM980 FCS Analysis Suite | Developed by Ram et. al. | Confidential & Proprietary</div>', unsafe_allow_html=True)
+st.markdown('<div class="footer">© 2026 Zeiss LSM980 FCS Analysis Suite | Developed by SHIBASISH | Confidential & Proprietary</div>', unsafe_allow_html=True)
