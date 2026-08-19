@@ -253,9 +253,13 @@ if st.session_state.current_project:
             st.info("No saved datasets found in this project yet.")
 
     @st.cache_data
-    def get_data(file_path_or_obj):
+    def get_data(file_path):
         try:
-            return load_zeiss(file_path_or_obj)
+            # We open the saved file and wrap it in BytesIO to perfectly mimic
+            # Streamlit's original virtual file behavior for the Zeiss reader.
+            with open(file_path, "rb") as f:
+                file_bytes = f.read()
+            return load_zeiss(io.BytesIO(file_bytes))
         except Exception as e:
             st.error(f"Error reading file content: {e}")
             return None
