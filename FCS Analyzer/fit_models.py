@@ -443,3 +443,50 @@ def compute_aic_bic(y, yfit, nparam):
     aic = n * np.log(ss_res / n) + 2 * nparam
     bic = n * np.log(ss_res / n) + nparam * np.log(n)
     return aic, bic
+
+
+# =====================================================================
+# UNIFIED DISPATCHER ENGINE FOR STREAMLIT DASHBOARD
+# =====================================================================
+
+def fit_fcs_model(tau, G, model_type="Standard 3D", S=7.5):
+    """
+    Unified router for app.py. Wraps existing fit functions 
+    and adds statistical metrics (AIC, BIC, Chi2, R2).
+    """
+    tau = np.asarray(tau)
+    G = np.asarray(G)
+    n = len(G)
+
+    # Route to existing fitting functions in fit_models.py
+    if model_type == "Triplet 3D":
+        res = fit_triplet(tau, G, S=S)
+        nparam = 4
+    else:
+        # Default to Standard 3D
+        res = fit_standard(tau, G, S=S)
+        nparam = 2
+
+    # Extract or compute residuals and goodness-of-fit metrics
+    Gfit = res.get("fit", G)
+    residual = G - Gfit
+    ss_res = np.sum(residual ** 2)
+    ss_tot = np.sum((G - np.mean(G)) ** 2)
+
+    r2 = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+    chi2 = ss_res / (n - nparam) if (n - nparam) > 0 else ss_res
+    
+    # Calculate Information Criteria
+    aic = n * np.log(ss_res / n) + 2 * nparam if ss_res > 0 else 0.0
+    bic = n * np.log(ss_res / n) + nparam * np.log(n) if ss_res > 0 else 0.0
+
+    # Ensure all required keys exist for app.py
+    res["R2"] = res.get("R2", r2)
+    res["Chi2"] = res.get("Chi2", chi2)
+    res["AIC"] = aic
+    res["BIC"] = bic
+    res["residual"] = residual
+    if "N" not in res and "G0" in res:
+        res["N"] = 1.0 / res["G0"] if res["G0"] > 0 else 0.0
+
+    return res
