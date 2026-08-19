@@ -68,7 +68,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Create local directory for user accounts
+# Create local directory for user accounts (Legacy system, will be updated)
 STORAGE_DIR = Path("saved_user_data")
 STORAGE_DIR.mkdir(exist_ok=True)
 
@@ -91,12 +91,10 @@ def login_screen():
     with col1:
         st.markdown("### Sign In / Register Session")
         
-        # Wrapping inputs in a form prevents the empty-string race condition
+        # Wrapped in form to prevent empty string bug
         with st.form("login_form"):
             username = st.text_input("Username or Lab ID")
             password = st.text_input("Access Key / Password", type="password")
-            
-            # The button is now a form submit button
             submit_btn = st.form_submit_button("Enter Analysis Suite", type="primary")
             
             if submit_btn:
@@ -115,76 +113,11 @@ def login_screen():
         * Stokes-Einstein Hydrodynamic Radius ($R_h$) & Molar Concentration ($C$) Calculators.
         * File upload & personal analysis session storage.
         """)
-        
-        # --- TAB 1: STRICT LOGIN ---
-        with tab_login:
-            with st.form("login_form"):
-                st.subheader("Account Access")
-                login_user = st.text_input("Username / Lab ID").strip().lower()
-                login_pass = st.text_input("Password", type="password").strip()
-                login_btn = st.form_submit_button("Log In", type="primary")
-                
-                if login_btn:
-                    if not login_user or not login_pass:
-                        st.error("⚠️ Please enter both Username and Password.")
-                    else:
-                        user_dir = STORAGE_DIR / login_user
-                        key_file = user_dir / "key.txt"
-                        
-                        if not user_dir.exists() or not key_file.exists():
-                            st.error("❌ Username not found. Please register your account first.")
-                        else:
-                            with open(key_file, "r") as f:
-                                stored_pass = f.read().strip()
-                                
-                            if login_pass != stored_pass:
-                                st.error("❌ Incorrect password.")
-                            else:
-                                st.session_state.authenticated = True
-                                st.session_state.username = login_user
-                                st.rerun()
-
-        # --- TAB 2: INSTANT REGISTRATION & LOGIN ---
-        with tab_register:
-            with st.form("register_form"):
-                st.subheader("Create Workspace")
-                reg_user = st.text_input("New Username / Lab ID").strip().lower()
-                reg_pass = st.text_input("New Password", type="password").strip()
-                reg_btn = st.form_submit_button("Register & Enter Suite")
-                
-                if reg_btn:
-                    if not reg_user or not reg_pass:
-                        st.error("⚠️ Username and Password cannot be empty.")
-                    else:
-                        user_dir = STORAGE_DIR / reg_user
-                        
-                        if user_dir.exists():
-                            st.error("⚠️ Username already exists. Please switch to the Log In tab.")
-                        else:
-                            # Create personal disk folder and security key
-                            user_dir.mkdir(exist_ok=True, parents=True)
-                            key_file = user_dir / "key.txt"
-                            with open(key_file, "w") as f:
-                                f.write(reg_pass)
-                            
-                            # INSTANT LOGIN
-                            st.session_state.authenticated = True
-                            st.session_state.username = reg_user
-                            st.rerun()
-
-    with col2:
-        st.info("""
-        **Platform Features:**
-        * Multi-Model FCS Fitting (Standard 3D, Triplet 3D).
-        * Automated Model Selection (AIC & BIC criteria).
-        * Stokes-Einstein Hydrodynamic Radius (Rh) & Molar Concentration (C) Calculators.
-        * File upload & personal analysis session storage.
-        """)
 
 # --- AUTHENTICATION GATE ---
 if not st.session_state.authenticated:
     login_screen()
-    st.markdown('<div class="footer">© 2026 Zeiss LSM980 FCS Analysis Suite | Developed by Ram et. al. | Confidential & Proprietary</div>', unsafe_allow_html=True)
+    st.markdown('<div class="footer">© 2026 Zeiss LSM980 FCS Analysis Suite | Developed by SHIBASISH | Confidential & Proprietary</div>', unsafe_allow_html=True)
     st.stop()
 
 
@@ -403,4 +336,4 @@ if uploaded_file is not None:
 else:
     st.info("👆 Please upload a raw FCS correlation text file to unlock real-time fitting.")
 
-st.markdown('<div class="footer">© 2026 Zeiss LSM980 FCS Analysis Suite | Developed by SHIBASISH BASKEY | Confidential & Proprietary</div>', unsafe_allow_html=True)
+st.markdown('<div class="footer">© 2026 Zeiss LSM980 FCS Analysis Suite | Developed by SHIBASISH | Confidential & Proprietary</div>', unsafe_allow_html=True)
